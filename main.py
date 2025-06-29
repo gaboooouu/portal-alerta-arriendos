@@ -1,66 +1,58 @@
+from flask import Flask
 import requests
 from bs4 import BeautifulSoup
 
-# Valor UF actual (puedes hacer esto dinámico luego con una API o scraping)
-VALOR_UF = 37000
+app = Flask(__name__)
 
 URL = "https://www.portalinmobiliario.com/arriendo/departamento/2-dormitorios/providencia-metropolitana/_OrderId_PRICE_NoIndex_True"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+UF_HOY = 37000  # Valor de la UF, puedes actualizarlo automáticamente después
 
 def buscar_arriendos():
-    OFFSET = 0
-    RESULTADOS_POR_PAGINA = 48
-    SEGUIR = True
+    response = requests.get(URL, headers=HEADERS)
 
-    while SEGUIR:
-        url_pagina = f"{URL}/_Desde_{OFFSET}" if OFFSET > 0 else URL
-        response = requests.get(url_pagina, headers=HEADERS)
+    if response.status_code != 200:
+        return f"Error al hacer la petición: {response.status_code}"
 
-        if response.status_code != 200:
-            print(f"Error al hacer la petición: {response.status_code}")
-            break
+    soup = BeautifulSoup(response.text, "html.parser")
+    publicaciones = soup.select("li.ui-search-layout__item")
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        publicaciones = soup.select("li.ui-search-layout__item")
+    if not publicaciones:
+        return "No se encontraron resultados."
 
-        if not publicaciones:
-            print("🔚 No hay más publicaciones.")
-            break
+    resultados = []
 
-        for pub in publicaciones:
-            try:
-                titulo = pub.select_one("h3").text.strip()
-                precio_element = pub.select_one(".andes-money-amount")
-                moneda = precio_element.select_one(".andes-money-amount__currency-symbol").text.strip()
-                fraccion = precio_element.select_one(".andes-money-amount__fraction").text.strip()
-                link = pub.select_one("a")["href"]
-                ubicacion = pub.select_one(".poly-component__location").text.strip()
+    for pub in publicaciones:
+        try:
+            titulo = pub.select_one("h3").text.strip()
+            moneda = pub.select_one(".andes-money-amount__currency-symbol").text.strip()
+            precio_str = pub.select_one(".andes-money-amount__fraction").text.strip()
+            ubicacion = pub.select_one(".poly-component__location").text.strip()
+            link = pub.select_one("a")["href"]
 
-                if moneda == "UF":
-                    centavos = precio_element.select_one(".andes-money-amount__cents")
-                    centavos = centavos.text.strip() if centavos else "0"
-                    precio_uf = float(f"{fraccion}.{centavos}")
-                    valor = int(precio_uf * VALOR_UF)
-                else:
-                    valor = int(fraccion.replace(".", "").replace("$", ""))
+            if moneda == "UF":
+                decimal = pub.select_one(".andes-money-amount__cents")
+                precio_float = float(precio_str.replace(".", "")) + (float(decimal.text) / 100 if decimal else 0)
+                precio_en_pesos = int(precio_float * UF_HOY)
+            else:
+                precio_en_pesos = int(precio_str.replace(".", "").replace("$", ""))
 
-                if valor > 650000:
-                    SEGUIR = False
-                    break  # Sal del bucle interno también
+            if precio_en_pesos <= 650000:
+                resultados.append(f"""
+                🏠 {titulo}
+                💰 ${precio_en_pesos:,}
+                📍 {ubicacion}
+                🔗 {link}
+                -------------------------
+                """)
+        except Exception:
+            continue
 
-                print("🏠", titulo)
-                print("💰", f"${int(valor):,}".replace(",", "."))
-                print("📍", ubicacion)
-                print("🔗", link)
-                print("-" * 40)
+    return "<br>".join(resultados) if resultados else "No hay resultados bajo $650.000."
 
-            except Exception as e:
-                continue
-
-        OFFSET += RESULTADOS_POR_PAGINA
-
+@app.route("/")
+def home():
+    return buscar_arriendos()
 
 if __name__ == "__main__":
-    buscar_arriendos()
+    app.run(host="0.0.0.0", port=10000)

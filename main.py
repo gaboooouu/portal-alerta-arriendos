@@ -8,12 +8,41 @@ import asyncio
 from telegram import Bot
 import unicodedata
 from datetime import datetime
+import json
 
 app = Flask(__name__)
 
 URL = "https://www.portalinmobiliario.com/arriendo/departamento/2-dormitorios/providencia-metropolitana/_OrderId_PRICE_NoIndex_True"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 UF_HOY = 39264  # Puedes actualizarlo automáticamente si quieres
+
+JSON_CREDENCIALES_URL = "https://susanjeann.com/alerta-portal/portal-alerta-55e2387fd1fe.json"
+SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+cache_identificadores = set()
+
+def cargar_identificadores_cache():
+    global cache_identificadores
+    try:
+        creds = obtener_creds_desde_url(JSON_CREDENCIALES_URL, SCOPE)
+        client = gspread.authorize(creds)
+        sheet = client.open("Alerta Portal").worksheet("Identificadores vistos")
+        cache_identificadores = set(sheet.col_values(1))
+    except Exception as e:
+        print("Error cargando identificadores a cache:", e)
+        cache_identificadores = set()
+
+def obtener_creds_desde_url(url_json, scope):
+    try:
+        response = requests.get(url_json)
+        response.raise_for_status()  # lanza error si status != 200
+        credenciales_dict = response.json()
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credenciales_dict, scope)
+        return creds
+    except Exception as e:
+        print("Error descargando o creando credenciales:", e)
+        return None
+
 
 def registrar_log():
     print(f"[{datetime.now()}] 🔄 Visita recibida, ejecutando scrapeo...")
@@ -26,26 +55,11 @@ def normalizar(texto):
 
 # --- Verificadores de URLs ya vistas ---
 def identificador_ya_visto(identificador):
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("https://susanjeann.com/alerta-portal/portal-alerta-55e2387fd1fe.json", scope)
-        client = gspread.authorize(creds)
-        sheet = client.open("Alerta Portal").worksheet("Identificadores vistos")
-        identificadores = sheet.col_values(1)
-        return identificador in identificadores
-    except Exception as e:
-        print("Error revisando identificador en Google Sheets:", e)
-        return False
+    return identificador in cache_identificadores
 
 def guardar_identificador(identificador):
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("https://susanjeann.com/alerta-portal/portal-alerta-55e2387fd1fe.json", scope)
-        client = gspread.authorize(creds)
-        sheet = client.open("Alerta Portal").worksheet("Identificadores vistos")
-        sheet.append_row([identificador])
-    except Exception as e:
-        print("Error guardando identificador en Google Sheets:", e)
+    global cache_identificadores
+    cache_identificadores.add(identificador)
 
 # --- Envío de mensaje a Telegram ---
 def enviar_telegram_mensaje(mensaje):
@@ -64,8 +78,11 @@ def enviar_telegram_mensaje(mensaje):
 # --- Guardado en Google Sheets ---
 def guardar_en_sheets(data):
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("https://susanjeann.com/alerta-portal/portal-alerta-55e2387fd1fe.json", scope)
+        creds = obtener_creds_desde_url(JSON_CREDENCIALES_URL, SCOPE)
+        if creds is None:
+            # Maneja error: por ejemplo, sal del proceso o devuelve error
+            print("No se pudieron obtener credenciales, abortando.")
+            return
         client = gspread.authorize(creds)
 
         sheet = client.open("Alerta Portal").sheet1
@@ -74,9 +91,33 @@ def guardar_en_sheets(data):
     except Exception as e:
         print("Error al guardar en Google Sheets:", e)
 
+def guardar_todos_identificadores():
+    try:
+        creds = obtener_creds_desde_url(JSON_CREDENCIALES_URL, SCOPE)
+        client = gspread.authorize(creds)
+        sheet = client.open("Alerta Portal").worksheet("Identificadores vistos")
+        # Aquí podrías limpiar la hoja y escribir toda la lista otra vez,
+        # o mejor: append solo los nuevos que no estaban antes
+        # Para simplicidad, guarda todos sin duplicados con un pequeño reset:
+        sheet.clear()
+        rows = [[id_] for id_ in sorted(cache_identificadores)]
+        sheet.append_rows(rows)
+        print("Guardados todos los identificadores en Sheets")
+    except Exception as e:
+        print("Error guardando todos los identificadores:", e)
+
+
 # --- Scraping y lógica principal ---
 def buscar_arriendos():
-    response = requests.get(URL, headers=HEADERS)
+    cargar_identificadores_cache()
+
+    try:
+        response = requests.get(URL, headers=HEADERS, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        return f"❌ Error al obtener datos de Portal Inmobiliario: {e}"
+
+
 
     if response.status_code != 200:
         return f"Error al hacer la petición: {response.status_code}"
@@ -108,7 +149,7 @@ def buscar_arriendos():
             # Creamos un identificador único para esta publicación
             identificador = normalizar(f"{titulo}-{ubicacion}-{precio_en_pesos}")
 
-            if precio_en_pesos <= 650000 and not identificador_ya_visto(identificador):
+            if precio_en_pesos <= 600000 and not identificador_ya_visto(identificador):
                 resultados.append(f"""
                 🏠 {titulo}
                 💰 ${precio_en_pesos:,}
@@ -129,6 +170,7 @@ def buscar_arriendos():
     if resultados_para_sheet:
         guardar_en_sheets(resultados_para_sheet)
 
+    guardar_todos_identificadores() 
     return "<br>".join(resultados) if resultados else "No hay resultados bajo $650.000."
 
 # --- Flask route ---

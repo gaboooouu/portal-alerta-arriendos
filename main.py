@@ -28,7 +28,7 @@ def normalizar(texto):
 def identificador_ya_visto(identificador):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("portal-alerta-55e2387fd1fe.json", scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name("https://susanjeann.com/alerta-portal/portal-alerta-55e2387fd1fe.json", scope)
         client = gspread.authorize(creds)
         sheet = client.open("Alerta Portal").worksheet("Identificadores vistos")
         identificadores = sheet.col_values(1)
@@ -40,7 +40,7 @@ def identificador_ya_visto(identificador):
 def guardar_identificador(identificador):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("portal-alerta-55e2387fd1fe.json", scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name("https://susanjeann.com/alerta-portal/portal-alerta-55e2387fd1fe.json", scope)
         client = gspread.authorize(creds)
         sheet = client.open("Alerta Portal").worksheet("Identificadores vistos")
         sheet.append_row([identificador])
@@ -65,7 +65,7 @@ def enviar_telegram_mensaje(mensaje):
 def guardar_en_sheets(data):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("portal-alerta-55e2387fd1fe.json", scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name("https://susanjeann.com/alerta-portal/portal-alerta-55e2387fd1fe.json", scope)
         client = gspread.authorize(creds)
 
         sheet = client.open("Alerta Portal").sheet1
